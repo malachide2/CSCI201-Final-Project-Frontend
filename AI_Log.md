@@ -1,9 +1,11 @@
 
 
 Yaphet AI Log
+
 Prompt:
 
 As a frontend partner on the project, I used the AI to help understand how our existing React components — particularly the Home page (Hike Grid), Hike Detail view, and shared UI elements like HikeCard and CommentCard — would need to change once we transitioned from dummy-data to live backend endpoints. I asked specifically about how to structure fetch calls, handle authentication cookies, and map backend JSON into the component props the UI already expected.
+
 Issues:
 
 Some of the AI’s initial answers oversimplified the integration. It assumed we would continue doing all filtering on the client, even though part of that logic was being moved server-side. It also relied on field names and dummy-data patterns that no longer existed, such as resolving users inside CommentCard from a local array. Finally, several examples omitted credentials: 'include', which is required for our backend’s JWT cookie system and would have caused review submission and upvotes to fail.
