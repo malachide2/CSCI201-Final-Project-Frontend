@@ -1,10 +1,11 @@
-import { useState, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import HikeCard from '../components/HikeCard';
 import SearchBar from '../components/SearchBar';
 import FilterPanel, { FilterState } from '../components/FilterPanel';
 import { Button } from '../components/ui/button';
 import { Filter } from 'lucide-react';
-import { hikes } from '../data/dummy-data';
+import { hikesAPI } from '../api';
+import { Hike } from '../types';
 
 const defaultFilters: FilterState = {
   difficulty: 'All',
@@ -17,27 +18,74 @@ export default function Home() {
   const [searchQuery, setSearchQuery] = useState('');
   const [filters, setFilters] = useState<FilterState>(defaultFilters);
   const [showFilters, setShowFilters] = useState(false);
+  const [hikes, setHikes] = useState<Hike[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
-  const filteredHikes = useMemo(() => {
-    return hikes.filter((hike) => {
-      // Search filter
-      const matchesSearch =
-        hike.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        hike.location.toLowerCase().includes(searchQuery.toLowerCase());
+  useEffect(() => {
+    const fetchHikes = async () => {
+      setLoading(true);
+      setError('');
+      try {
+        const difficulty = filters.difficulty === 'All' ? undefined : filters.difficulty;
+        const response = await hikesAPI.getAll({
+          search: searchQuery || undefined,
+          difficulty,
+          minLength: filters.minLength > 0 ? filters.minLength : undefined,
+          maxLength: filters.maxLength < 20 ? filters.maxLength : undefined,
+          minRating: filters.minRating > 0 ? filters.minRating : undefined,
+        });
+        
+        // Transform backend response to frontend format
+        if (Array.isArray(response)) {
+          // Convert relative image paths to full URLs
+          const backendBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080/CSCI201-Final-Project-Backend';
+          const imageBaseUrl = backendBaseUrl.replace('/api', '').replace(/\/$/, ''); // Remove /api if present and trailing slash
+          
+          const transformedHikes = response.map((hike: any) => {
+            // Map difficulty number to string
+            // Backend stores: Easy=1.0, Moderate=2.5, Hard=4.0, Expert=5.0
+            let difficultyStr: 'Easy' | 'Moderate' | 'Hard' | 'Expert' = 'Moderate';
+            const difficultyNum = hike.difficulty || 2.0;
+            // Use ranges that properly separate the exact values
+            if (difficultyNum <= 1.5) difficultyStr = 'Easy';        // 1.0
+            else if (difficultyNum <= 3.0) difficultyStr = 'Moderate'; // 2.5
+            else if (difficultyNum <= 4.5) difficultyStr = 'Hard';    // 4.0
+            else difficultyStr = 'Expert';                             // 5.0
+            
+            // Convert thumbnail_url to full URL if it's a relative path
+            let thumbnailUrl = hike.thumbnail_url;
+            if (thumbnailUrl && thumbnailUrl.startsWith('/')) {
+              thumbnailUrl = imageBaseUrl + thumbnailUrl;
+            }
+            
+            return {
+              id: String(hike.hike_id || hike.id || ''),
+              name: hike.name || '',
+              location: hike.location_text || hike.location || '',
+              difficulty: difficultyStr,
+              length: hike.distance || hike.length || 0,
+              description: hike.description || '',
+              images: thumbnailUrl ? [thumbnailUrl] : (hike.images || []),
+              averageRating: hike.average_rating || hike.averageRating || 0,
+              totalRatings: hike.totalRatings || 0,
+              createdBy: String(hike.created_by || hike.createdBy || ''),
+              createdAt: hike.created_at || hike.createdAt || new Date().toISOString()
+            };
+          });
+          setHikes(transformedHikes);
+        } else {
+          setHikes([]);
+        }
+      } catch (err) {
+        console.error('Error fetching hikes:', err);
+        setError('Failed to load hikes. Please try again.');
+      } finally {
+        setLoading(false);
+      }
+    };
 
-      // Difficulty filter
-      const matchesDifficulty =
-        filters.difficulty === 'All' || hike.difficulty === filters.difficulty;
-
-      // Length filter
-      const matchesLength =
-        hike.length >= filters.minLength && hike.length <= filters.maxLength;
-
-      // Rating filter
-      const matchesRating = hike.averageRating >= filters.minRating;
-
-      return matchesSearch && matchesDifficulty && matchesLength && matchesRating;
-    });
+    fetchHikes();
   }, [searchQuery, filters]);
 
   return (
@@ -87,13 +135,23 @@ export default function Home() {
           <div className="flex-1">
             <div className="mb-4 flex items-center justify-between">
               <h2 className="text-2xl font-semibold">
-                {filteredHikes.length} {filteredHikes.length === 1 ? 'Trail' : 'Trails'} Found
+                {loading ? 'Loading...' : `${hikes.length} ${hikes.length === 1 ? 'Trail' : 'Trails'} Found`}
               </h2>
             </div>
 
-            {filteredHikes.length > 0 ? (
+            {loading ? (
+              <div className="text-center py-16">
+                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
+                <p className="text-muted-foreground">Loading trails...</p>
+              </div>
+            ) : error ? (
+              <div className="text-center py-16">
+                <p className="text-destructive mb-4">{error}</p>
+                <Button onClick={() => window.location.reload()}>Retry</Button>
+              </div>
+            ) : hikes.length > 0 ? (
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-                {filteredHikes.map((hike) => (
+                {hikes.map((hike) => (
                   <HikeCard key={hike.id} hike={hike} />
                 ))}
               </div>

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card } from '../components/ui/card';
 import { Input } from '../components/ui/input';
@@ -7,16 +7,71 @@ import { Avatar, AvatarFallback, AvatarImage } from '../components/ui/avatar';
 import { Badge } from '../components/ui/badge';
 import { ArrowLeft, UserPlus, UserMinus, Search } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
-import { users, ratings, hikes } from '../data/dummy-data';
+import { friendsAPI } from '../api';
 import StarRating from '../components/StarRating';
+
+interface Friend {
+  userId: number;
+  username: string;
+  email: string;
+  profileImage?: string;
+}
+
+interface FriendActivity {
+  hikeId: number;
+  hikeName: string;
+  rating: number;
+  comment: string;
+  createdAt: string;
+  images?: string[];
+}
 
 export default function Friends() {
   const navigate = useNavigate();
-  const { user, isAuthenticated, isLoading, updateUser } = useAuth();
+  const { user, isAuthenticated, isLoading } = useAuth();
   const [searchUsername, setSearchUsername] = useState('');
-  const [searchResult, setSearchResult] = useState<typeof users[0] | null>(null);
+  const [searchResult, setSearchResult] = useState<Friend | null>(null);
   const [searchError, setSearchError] = useState('');
-  const [selectedFriendId, setSelectedFriendId] = useState<string | null>(null);
+  const [selectedFriendId, setSelectedFriendId] = useState<number | null>(null);
+  const [friends, setFriends] = useState<Friend[]>([]);
+  const [friendActivity, setFriendActivity] = useState<FriendActivity[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!isAuthenticated || !user) return;
+
+    const fetchFriends = async () => {
+      setLoading(true);
+      try {
+        const response = await friendsAPI.getAll();
+        setFriends(response.friends || []);
+      } catch (error) {
+        console.error('Error fetching friends:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchFriends();
+  }, [isAuthenticated, user]);
+
+  useEffect(() => {
+    if (!selectedFriendId) {
+      setFriendActivity([]);
+      return;
+    }
+
+    const fetchActivity = async () => {
+      try {
+        const response = await friendsAPI.getActivity(selectedFriendId, 5);
+        setFriendActivity(response.activities || []);
+      } catch (error) {
+        console.error('Error fetching friend activity:', error);
+      }
+    };
+
+    fetchActivity();
+  }, [selectedFriendId]);
 
   // Early returns before any logic that depends on user data
   if (isLoading) {
@@ -39,17 +94,9 @@ export default function Friends() {
     );
   }
 
-  // Now it's safe to use user data
-  const friends = users.filter((u) => user.friends.includes(u.id));
-  const selectedFriend = selectedFriendId ? users.find((u) => u.id === selectedFriendId) : null;
-  const friendRatings = selectedFriendId
-    ? ratings
-        .filter((r) => r.userId === selectedFriendId)
-        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-        .slice(0, 5)
-    : [];
+  const selectedFriend = selectedFriendId ? friends.find((f) => f.userId === selectedFriendId) : null;
 
-  const handleSearch = () => {
+  const handleSearch = async () => {
     setSearchError('');
     setSearchResult(null);
 
@@ -58,44 +105,46 @@ export default function Friends() {
       return;
     }
 
-    const foundUser = users.find(
-      (u) => u.username.toLowerCase() === searchUsername.toLowerCase()
-    );
-
-    if (!foundUser) {
-      setSearchError('User not found');
-      return;
+    try {
+      // Note: You may need to implement a user search endpoint
+      // For now, we'll try to add directly and let the backend handle validation
+      const response = await friendsAPI.add(searchUsername);
+      if (response.status === 'success') {
+        // Refresh friends list
+        const friendsResponse = await friendsAPI.getAll();
+        setFriends(friendsResponse.friends || []);
+        setSearchResult(null);
+        setSearchUsername('');
+      }
+    } catch (error: any) {
+      setSearchError(error.message || 'User not found or already in your friends list');
     }
-
-    if (foundUser.id === user.id) {
-      setSearchError('You cannot add yourself');
-      return;
-    }
-
-    if (user.friends.includes(foundUser.id)) {
-      setSearchError('Already in your friends list');
-      return;
-    }
-
-    setSearchResult(foundUser);
   };
 
-  const handleAddFriend = (friendId: string) => {
-    updateUser({
-      ...user,
-      friends: [...user.friends, friendId]
-    });
-    setSearchResult(null);
-    setSearchUsername('');
+  const handleAddFriend = async (username: string) => {
+    try {
+      const response = await friendsAPI.add(username);
+      if (response.status === 'success') {
+        const friendsResponse = await friendsAPI.getAll();
+        setFriends(friendsResponse.friends || []);
+        setSearchResult(null);
+        setSearchUsername('');
+      }
+    } catch (error) {
+      console.error('Error adding friend:', error);
+    }
   };
 
-  const handleRemoveFriend = (friendId: string) => {
-    updateUser({
-      ...user,
-      friends: user.friends.filter((id) => id !== friendId)
-    });
-    if (selectedFriendId === friendId) {
-      setSelectedFriendId(null);
+  const handleRemoveFriend = async (friendUserId: number) => {
+    try {
+      await friendsAPI.remove(friendUserId);
+      const friendsResponse = await friendsAPI.getAll();
+      setFriends(friendsResponse.friends || []);
+      if (selectedFriendId === friendUserId) {
+        setSelectedFriendId(null);
+      }
+    } catch (error) {
+      console.error('Error removing friend:', error);
     }
   };
 
@@ -159,7 +208,7 @@ export default function Friends() {
                     </div>
                     <Button
                       size="sm"
-                      onClick={() => handleAddFriend(searchResult.id)}
+                      onClick={() => handleAddFriend(searchResult.username)}
                     >
                       <UserPlus size={16} />
                     </Button>
@@ -173,14 +222,19 @@ export default function Friends() {
               <h2 className="text-xl font-semibold mb-4">
                 My Friends ({friends.length})
               </h2>
-              {friends.length > 0 ? (
+              {loading ? (
+                <div className="text-center py-8">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-2"></div>
+                  <p className="text-sm text-muted-foreground">Loading...</p>
+                </div>
+              ) : friends.length > 0 ? (
                 <div className="space-y-2">
                   {friends.map((friend) => (
                     <button
-                      key={friend.id}
-                      onClick={() => setSelectedFriendId(friend.id)}
+                      key={friend.userId}
+                      onClick={() => setSelectedFriendId(friend.userId)}
                       className={`w-full p-3 rounded-lg flex items-center justify-between transition-colors ${
-                        selectedFriendId === friend.id
+                        selectedFriendId === friend.userId
                           ? 'bg-primary/10 border-2 border-primary'
                           : 'bg-muted/50 hover:bg-muted border-2 border-transparent'
                       }`}
@@ -195,7 +249,7 @@ export default function Friends() {
                         <div className="text-left">
                           <p className="font-semibold">{friend.username}</p>
                           <p className="text-xs text-muted-foreground">
-                            {ratings.filter((r) => r.userId === friend.id).length} reviews
+                            {friend.email}
                           </p>
                         </div>
                       </div>
@@ -204,7 +258,7 @@ export default function Friends() {
                         variant="ghost"
                         onClick={(e) => {
                           e.stopPropagation();
-                          handleRemoveFriend(friend.id);
+                          handleRemoveFriend(friend.userId);
                         }}
                       >
                         <UserMinus size={16} />
@@ -239,54 +293,46 @@ export default function Friends() {
 
                 <h3 className="text-xl font-semibold mb-4">Recent Activity</h3>
 
-                {friendRatings.length > 0 ? (
+                {friendActivity.length > 0 ? (
                   <div className="space-y-4">
-                    {friendRatings.map((rating) => {
-                      const hike = hikes.find((h) => h.id === rating.hikeId);
-                      if (!hike) return null;
-
-                      return (
-                        <div
-                          key={rating.id}
-                          className="p-4 bg-muted/50 rounded-lg hover:bg-muted transition-colors cursor-pointer"
-                          onClick={() => navigate(`/hike/${hike.id}`)}
-                        >
-                          <div className="flex items-start justify-between mb-2">
-                            <div className="flex-1">
-                              <h4 className="font-semibold">{hike.name}</h4>
-                              <p className="text-sm text-muted-foreground">
-                                {hike.location}
-                              </p>
-                            </div>
-                            <Badge variant="secondary">
-                              {new Date(rating.createdAt).toLocaleDateString()}
-                            </Badge>
+                    {friendActivity.map((activity, idx) => (
+                      <div
+                        key={idx}
+                        className="p-4 bg-muted/50 rounded-lg hover:bg-muted transition-colors cursor-pointer"
+                        onClick={() => navigate(`/hike/${activity.hikeId}`)}
+                      >
+                        <div className="flex items-start justify-between mb-2">
+                          <div className="flex-1">
+                            <h4 className="font-semibold">{activity.hikeName}</h4>
                           </div>
-
-                          <div className="flex items-center gap-2 mb-2">
-                            <StarRating rating={rating.rating} readonly size={16} />
-                            <span className="text-sm font-medium">
-                              {rating.rating.toFixed(1)}
-                            </span>
-                          </div>
-
-                          <p className="text-sm">{rating.comment}</p>
-
-                          {rating.images.length > 0 && (
-                            <div className="grid grid-cols-3 gap-2 mt-3">
-                              {rating.images.slice(0, 3).map((img, idx) => (
-                                <img
-                                  key={idx}
-                                  src={img}
-                                  alt={`Review ${idx + 1}`}
-                                  className="rounded-lg w-full h-24 object-cover"
-                                />
-                              ))}
-                            </div>
-                          )}
+                          <Badge variant="secondary">
+                            {new Date(activity.createdAt).toLocaleDateString()}
+                          </Badge>
                         </div>
-                      );
-                    })}
+
+                        <div className="flex items-center gap-2 mb-2">
+                          <StarRating rating={activity.rating} readonly size={16} />
+                          <span className="text-sm font-medium">
+                            {activity.rating.toFixed(1)}
+                          </span>
+                        </div>
+
+                        <p className="text-sm">{activity.comment}</p>
+
+                        {activity.images && activity.images.length > 0 && (
+                          <div className="grid grid-cols-3 gap-2 mt-3">
+                            {activity.images.slice(0, 3).map((img, imgIdx) => (
+                              <img
+                                key={imgIdx}
+                                src={img}
+                                alt={`Review ${imgIdx + 1}`}
+                                className="rounded-lg w-full h-24 object-cover"
+                              />
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
                   </div>
                 ) : (
                   <p className="text-center text-muted-foreground py-8">

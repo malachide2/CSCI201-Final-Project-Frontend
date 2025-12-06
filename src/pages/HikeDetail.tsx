@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Card } from '../components/ui/card';
 import { Button } from '../components/ui/button';
@@ -7,10 +7,10 @@ import { Textarea } from '../components/ui/textarea';
 import { Label } from '../components/ui/label';
 import StarRating from '../components/StarRating';
 import CommentCard from '../components/CommentCard';
-import { MapPin, TrendingUp, ArrowLeft, Upload } from 'lucide-react';
-import { hikes, ratings as initialRatings, users } from '../data/dummy-data';
+import { MapPin, TrendingUp, ArrowLeft } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
-import { Rating } from '../types';
+import { Rating, Hike } from '../types';
+import { hikesAPI, reviewsAPI } from '../api';
 
 const difficultyColors = {
   Easy: 'bg-green-100 text-green-800 border-green-300',
@@ -24,16 +24,99 @@ export default function HikeDetail() {
   const navigate = useNavigate();
   const { user, isAuthenticated } = useAuth();
   
-  const [ratings, setRatings] = useState<Rating[]>(initialRatings);
+  const [hike, setHike] = useState<Hike | null>(null);
+  const [ratings, setRatings] = useState<Rating[]>([]);
   const [newRating, setNewRating] = useState(0);
   const [newComment, setNewComment] = useState('');
   const [selectedImage, setSelectedImage] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
 
-  const hike = hikes.find((h) => h.id === id);
-  const hikeRatings = useMemo(
-    () => ratings.filter((r) => r.hikeId === id).sort((a, b) => b.upvotes - a.upvotes),
-    [ratings, id]
-  );
+  useEffect(() => {
+    const fetchData = async () => {
+      if (!id) return;
+      setLoading(true);
+      try {
+        const [hikeData, reviewsData] = await Promise.all([
+          hikesAPI.getById(id),
+          reviewsAPI.getByHikeId(Number(id))
+        ]);
+        
+        // Transform backend response to frontend format
+        if (hikeData) {
+          // Convert relative image paths to full URLs
+          const backendBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080/CSCI201-Final-Project-Backend';
+          const imageBaseUrl = backendBaseUrl.replace('/api', '').replace(/\/$/, ''); // Remove /api if present and trailing slash
+          
+          const transformedImages = (hikeData.images || []).map((img: string) => {
+            // If image path is relative (starts with /), prepend backend URL
+            if (img && img.startsWith('/')) {
+              return imageBaseUrl + img;
+            }
+            // If already a full URL, use as is
+            return img;
+          });
+          
+          const transformedHike = {
+            id: String(hikeData.hike_id || hikeData.id || ''),
+            name: hikeData.name || '',
+            location: hikeData.location_text || hikeData.location || '',
+            difficulty: hikeData.difficulty || 'Moderate',
+            length: hikeData.distance || hikeData.length || 0,
+            description: hikeData.description || '',
+            images: transformedImages,
+            averageRating: hikeData.average_rating || hikeData.averageRating || 0,
+            totalRatings: hikeData.total_ratings || hikeData.totalRatings || 0,
+            createdBy: String(hikeData.created_by || hikeData.createdBy || ''),
+            createdAt: hikeData.created_at || hikeData.createdAt || new Date().toISOString()
+          };
+          setHike(transformedHike);
+        }
+        
+        // Transform reviews response if needed
+        const reviews = reviewsData.reviews || reviewsData || [];
+        const transformedReviews = Array.isArray(reviews) ? reviews.map((review: any) => {
+          // Ensure upvotedBy is always an array
+          let upvotedBy: string[] = [];
+          if (Array.isArray(review.upvotedBy)) {
+            upvotedBy = review.upvotedBy.map((id: any) => String(id));
+          } else if (review.upvotedByCurrentUser && user) {
+            // If the current user has upvoted, add their ID to the array
+            upvotedBy = [user.id];
+          }
+          
+          return {
+            id: String(review.id || review.review_id || ''),
+            hikeId: String(review.hikeId || review.hike_id || ''),
+            userId: String(review.userId || review.user_id || ''),
+            rating: review.rating || 0,
+            comment: review.comment || review.review_body || '',
+            upvotes: review.upvotes || review.upvotes_count || 0,
+            upvotedBy: upvotedBy,
+            images: review.images || [],
+            createdAt: review.createdAt || review.created_at || new Date().toISOString(),
+            username: review.username || `User ${review.userId || review.user_id}`
+          };
+        }) : [];
+        setRatings(transformedReviews);
+      } catch (error) {
+        console.error('Error fetching hike data:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchData();
+  }, [id]);
+
+  if (loading) {
+    return (
+      <div className="container mx-auto px-4 py-16 text-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
+        <p className="text-muted-foreground">Loading hike details...</p>
+      </div>
+    );
+  }
 
   if (!hike) {
     return (
@@ -44,47 +127,59 @@ export default function HikeDetail() {
     );
   }
 
-  const handleSubmitReview = () => {
-    if (!isAuthenticated || !user || newRating === 0) return;
+  const hikeRatings = [...ratings].sort((a, b) => b.upvotes - a.upvotes);
 
-    const newReview: Rating = {
-      id: String(ratings.length + 1),
-      hikeId: hike.id,
-      userId: user.id,
-      rating: newRating,
-      comment: newComment,
-      upvotes: 0,
-      upvotedBy: [],
-      images: [],
-      createdAt: new Date().toISOString()
-    };
+  const handleSubmitReview = async () => {
+    if (!isAuthenticated || !user || newRating === 0 || !newComment.trim()) return;
 
-    setRatings([...ratings, newReview]);
-    setNewRating(0);
-    setNewComment('');
+    setSubmitting(true);
+    try {
+      const response = await reviewsAPI.create(Number(hike.id), newRating, newComment);
+      setRatings([...ratings, response]);
+      setNewRating(0);
+      setNewComment('');
+    } catch (error) {
+      console.error('Error submitting review:', error);
+      alert('Failed to submit review. Please try again.');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
-  const handleUpvote = (ratingId: string) => {
+  const handleUpvote = async (ratingId: string) => {
     if (!isAuthenticated || !user) return;
 
-    setRatings(
-      ratings.map((r) => {
+    try {
+      const response = await reviewsAPI.upvote(Number(ratingId));
+      setRatings(ratings.map(r => {
         if (r.id === ratingId) {
-          const hasUpvoted = r.upvotedBy.includes(user.id);
-          return {
-            ...r,
-            upvotes: hasUpvoted ? r.upvotes - 1 : r.upvotes + 1,
-            upvotedBy: hasUpvoted
-              ? r.upvotedBy.filter((id) => id !== user.id)
-              : [...r.upvotedBy, user.id]
+          // Ensure upvotedBy is always an array
+          const currentUpvotedBy = Array.isArray(r.upvotedBy) ? r.upvotedBy : [];
+          
+          // Update based on response
+          let newUpvotedBy: string[];
+          if (response.upvoted) {
+            // Add user ID if not already present
+            newUpvotedBy = currentUpvotedBy.includes(user.id) 
+              ? currentUpvotedBy 
+              : [...currentUpvotedBy, user.id];
+          } else {
+            // Remove user ID
+            newUpvotedBy = currentUpvotedBy.filter(id => id !== user.id);
+          }
+          
+          return { 
+            ...r, 
+            upvotes: response.upvotes, 
+            upvotedBy: newUpvotedBy 
           };
         }
         return r;
-      })
-    );
+      }));
+    } catch (error) {
+      console.error('Error upvoting:', error);
+    }
   };
-
-  const creator = users.find((u) => u.id === hike.createdBy);
 
   return (
     <div className="min-h-screen bg-background">
@@ -99,19 +194,25 @@ export default function HikeDetail() {
       </div>
 
       <div className="container mx-auto px-4 py-8">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <div className="max-w-4xl mx-auto">
           {/* Main Content */}
-          <div className="lg:col-span-2 space-y-6">
+          <div className="space-y-6">
             {/* Image Gallery */}
             <Card className="overflow-hidden">
-              <div className="relative h-96">
-                <img
-                  src={hike.images[selectedImage]}
-                  alt={hike.name}
-                  className="w-full h-full object-cover"
-                />
+              <div className="relative h-96 bg-gray-200">
+                {hike.images && hike.images.length > 0 ? (
+                  <img
+                    src={hike.images[selectedImage]}
+                    alt={hike.name}
+                    className="w-full h-full object-cover"
+                  />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center text-muted-foreground">
+                    No images available
+                  </div>
+                )}
               </div>
-              {hike.images.length > 1 && (
+              {hike.images && hike.images.length > 1 && (
                 <div className="p-4 flex gap-2 overflow-x-auto">
                   {hike.images.map((img, idx) => (
                     <button
@@ -159,15 +260,17 @@ export default function HikeDetail() {
                 </div>
               </div>
 
-              <div>
-                <h2 className="text-xl font-semibold mb-3">About This Trail</h2>
-                <p className="text-muted-foreground leading-relaxed">{hike.description}</p>
-              </div>
+              {hike.description && hike.description.trim() && (
+                <div>
+                  <h2 className="text-xl font-semibold mb-3">About This Trail</h2>
+                  <p className="text-muted-foreground leading-relaxed">{hike.description}</p>
+                </div>
+              )}
 
-              {creator && (
+              {hike.createdAt && (
                 <div className="mt-6 pt-6 border-t">
                   <p className="text-sm text-muted-foreground">
-                    Added by <span className="font-semibold text-foreground">{creator.username}</span> on{' '}
+                    Added on{' '}
                     {new Date(hike.createdAt).toLocaleDateString('en-US', {
                       year: 'numeric',
                       month: 'long',
@@ -210,9 +313,9 @@ export default function HikeDetail() {
                     </div>
                     <Button
                       onClick={handleSubmitReview}
-                      disabled={newRating === 0 || !newComment.trim()}
+                      disabled={newRating === 0 || !newComment.trim() || submitting}
                     >
-                      Post Review
+                      {submitting ? 'Posting...' : 'Post Review'}
                     </Button>
                   </div>
                 </div>
@@ -241,21 +344,6 @@ export default function HikeDetail() {
                   </p>
                 )}
               </div>
-            </Card>
-          </div>
-
-          {/* Sidebar */}
-          <div className="lg:col-span-1">
-            <Card className="p-6 sticky top-24">
-              <h3 className="font-semibold mb-4">Trail Actions</h3>
-              {isAuthenticated && (
-                <div className="space-y-2">
-                  <Button className="w-full" variant="outline">
-                    <Upload size={18} className="mr-2" />
-                    Upload Photos
-                  </Button>
-                </div>
-              )}
             </Card>
           </div>
         </div>

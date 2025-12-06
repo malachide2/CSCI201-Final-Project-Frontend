@@ -15,7 +15,7 @@ import {
 import { ArrowLeft, Upload, X } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { Difficulty } from '../types';
-import { hikes } from '../data/dummy-data';
+import { hikesAPI } from '../api';
 
 export default function AddHike() {
   const navigate = useNavigate();
@@ -26,8 +26,8 @@ export default function AddHike() {
   const [difficulty, setDifficulty] = useState<Difficulty>('Moderate');
   const [length, setLength] = useState('');
   const [description, setDescription] = useState('');
-  const [imageUrls, setImageUrls] = useState<string[]>([]);
-  const [currentImageUrl, setCurrentImageUrl] = useState('');
+  const [imageFiles, setImageFiles] = useState<File[]>([]);
+  const [imagePreviews, setImagePreviews] = useState<string[]>([]);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
 
@@ -51,18 +51,35 @@ export default function AddHike() {
     );
   }
 
-  const handleAddImage = () => {
-    if (currentImageUrl.trim()) {
-      setImageUrls([...imageUrls, currentImageUrl.trim()]);
-      setCurrentImageUrl('');
-    }
+  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files) return;
+
+    const newFiles: File[] = [];
+    const newPreviews: string[] = [];
+
+    Array.from(files).forEach((file) => {
+      if (file.type.startsWith('image/')) {
+        newFiles.push(file);
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          if (event.target?.result) {
+            setImagePreviews((prev) => [...prev, event.target!.result as string]);
+          }
+        };
+        reader.readAsDataURL(file);
+      }
+    });
+
+    setImageFiles((prev) => [...prev, ...newFiles]);
   };
 
   const handleRemoveImage = (index: number) => {
-    setImageUrls(imageUrls.filter((_, i) => i !== index));
+    setImageFiles((prev) => prev.filter((_, i) => i !== index));
+    setImagePreviews((prev) => prev.filter((_, i) => i !== index));
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
 
@@ -78,26 +95,41 @@ export default function AddHike() {
       return;
     }
 
-    if (imageUrls.length === 0) {
+    if (imageFiles.length === 0) {
       setError('Please add at least one image');
       return;
     }
 
-    // Check for duplicate name (case-insensitive)
-    const duplicate = hikes.find(
-      (h) => h.name.toLowerCase() === name.trim().toLowerCase()
-    );
-    if (duplicate) {
-      setError('A hike with this name already exists');
-      return;
-    }
+    // Convert difficulty to number (1-5)
+    const difficultyMap: Record<Difficulty, number> = {
+      'Easy': 1,
+      'Moderate': 2.5,
+      'Hard': 4,
+      'Expert': 5
+    };
 
-    // Mock submit - in production, this would call the backend
-    setSuccess(true);
-    
-    setTimeout(() => {
-      navigate('/');
-    }, 2000);
+    try {
+      const formData = new FormData();
+      formData.append('name', name.trim());
+      formData.append('location', location.trim());
+      formData.append('difficulty', difficultyMap[difficulty].toString());
+      formData.append('distance', lengthNum.toString());
+      formData.append('description', description.trim());
+      
+      // Add image files (backend expects files named "images" or "image")
+      imageFiles.forEach((file) => {
+        formData.append('images', file);
+      });
+
+      await hikesAPI.create(formData);
+      setSuccess(true);
+      
+      setTimeout(() => {
+        navigate('/');
+      }, 2000);
+    } catch (err: any) {
+      setError(err.message || 'Failed to add hike. Please try again.');
+    }
   };
 
   if (success) {
@@ -214,42 +246,37 @@ export default function AddHike() {
             <div>
               <Label>Trail Images *</Label>
               <p className="text-sm text-muted-foreground mt-1 mb-3">
-                Add image URLs for the trail (at least one required)
+                Upload images for the trail (at least one required, max 5MB per image)
               </p>
               
-              <div className="flex gap-2 mb-3">
-                <Input
-                  value={currentImageUrl}
-                  onChange={(e) => setCurrentImageUrl(e.target.value)}
-                  placeholder="https://example.com/image.jpg"
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      handleAddImage();
-                    }
-                  }}
+              <div className="mb-3">
+                <input
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  onChange={handleImageSelect}
+                  className="hidden"
+                  id="image-upload"
                 />
                 <Button
                   type="button"
-                  onClick={handleAddImage}
-                  disabled={!currentImageUrl.trim()}
+                  variant="outline"
+                  className="w-full"
+                  onClick={() => document.getElementById('image-upload')?.click()}
                 >
                   <Upload size={18} className="mr-2" />
-                  Add
+                  Select Images
                 </Button>
               </div>
 
-              {imageUrls.length > 0 && (
+              {imagePreviews.length > 0 && (
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                  {imageUrls.map((url, index) => (
+                  {imagePreviews.map((preview, index) => (
                     <div key={index} className="relative group">
                       <img
-                        src={url}
+                        src={preview}
                         alt={`Preview ${index + 1}`}
                         className="w-full h-32 object-cover rounded-lg"
-                        onError={(e) => {
-                          e.currentTarget.src = 'https://via.placeholder.com/400x300?text=Invalid+Image';
-                        }}
                       />
                       <button
                         type="button"
@@ -258,6 +285,9 @@ export default function AddHike() {
                       >
                         <X size={16} />
                       </button>
+                      <p className="text-xs text-muted-foreground mt-1 truncate">
+                        {imageFiles[index]?.name}
+                      </p>
                     </div>
                   ))}
                 </div>

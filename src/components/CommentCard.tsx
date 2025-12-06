@@ -4,7 +4,6 @@ import StarRating from './StarRating';
 import { Button } from './ui/button';
 import { ThumbsUp } from 'lucide-react';
 import { Rating } from '../types';
-import { users } from '../data/dummy-data';
 import { useAuth } from '../contexts/AuthContext';
 
 interface CommentCardProps {
@@ -14,23 +13,23 @@ interface CommentCardProps {
 
 export default function CommentCard({ rating, onUpvote }: CommentCardProps) {
   const { user: currentUser } = useAuth();
-  const user = users.find(u => u.id === rating.userId);
-  const hasUpvoted = currentUser ? rating.upvotedBy.includes(currentUser.id) : false;
-
-  if (!user) return null;
+  // Rating should include username from backend, or we can use userId as fallback
+  const username = (rating as any).username || `User ${rating.userId}`;
+  const hasUpvoted = currentUser ? (rating.upvotedBy || []).includes(currentUser.id) : false;
+  const images = rating.images || [];
 
   return (
     <Card className="p-4">
       <div className="flex items-start gap-3">
         <Avatar>
-          <AvatarImage src={user.profileImage} alt={user.username} />
-          <AvatarFallback>{user.username[0].toUpperCase()}</AvatarFallback>
+          <AvatarImage src={(rating as any).profileImage} alt={username} />
+          <AvatarFallback>{username[0].toUpperCase()}</AvatarFallback>
         </Avatar>
 
         <div className="flex-1">
           <div className="flex items-center justify-between mb-2">
             <div>
-              <p className="font-semibold">{user.username}</p>
+              <p className="font-semibold">{username}</p>
               <p className="text-xs text-muted-foreground">
                 {new Date(rating.createdAt).toLocaleDateString('en-US', {
                   year: 'numeric',
@@ -44,9 +43,9 @@ export default function CommentCard({ rating, onUpvote }: CommentCardProps) {
 
           <p className="text-sm mb-3">{rating.comment}</p>
 
-          {rating.images.length > 0 && (
+          {images.length > 0 && (
             <div className="grid grid-cols-2 gap-2 mb-3">
-              {rating.images.map((img, idx) => (
+              {images.map((img, idx) => (
                 <img
                   key={idx}
                   src={img}

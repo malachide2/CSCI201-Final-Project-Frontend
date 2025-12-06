@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card } from '../components/ui/card';
 import { Button } from '../components/ui/button';
@@ -6,7 +6,8 @@ import { Avatar, AvatarFallback, AvatarImage } from '../components/ui/avatar';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { ArrowLeft, MapPin, Star } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
-import { hikes, ratings } from '../data/dummy-data';
+import { hikesAPI, reviewsAPI } from '../api';
+import { Hike, Rating } from '../types';
 import HikeCard from '../components/HikeCard';
 import CommentCard from '../components/CommentCard';
 
@@ -14,6 +15,36 @@ export default function Profile() {
   const navigate = useNavigate();
   const { user, isAuthenticated, isLoading } = useAuth();
   const [activeTab, setActiveTab] = useState('hikes');
+  const [userHikes, setUserHikes] = useState<Hike[]>([]);
+  const [userRatings, setUserRatings] = useState<Rating[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!isAuthenticated || !user) return;
+
+    const fetchData = async () => {
+      setLoading(true);
+      try {
+        // Fetch user's hikes and reviews
+        // Note: You may need to implement these endpoints on the backend
+        const allHikes = await hikesAPI.getAll();
+        const filteredHikes = Array.isArray(allHikes) 
+          ? allHikes.filter((h: Hike) => h.createdBy === user.id)
+          : [];
+        setUserHikes(filteredHikes);
+
+        // For reviews, we'd need a user-specific endpoint or filter all reviews
+        // For now, we'll leave it empty or you can implement a user reviews endpoint
+        setUserRatings([]);
+      } catch (error) {
+        console.error('Error fetching profile data:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchData();
+  }, [isAuthenticated, user]);
 
   // Early returns before any hooks that depend on user data
   if (isLoading) {
@@ -35,12 +66,6 @@ export default function Profile() {
       </div>
     );
   }
-
-  // Now it's safe to use user data
-  const userHikes = hikes.filter((h) => h.createdBy === user.id);
-  const userRatings = ratings
-    .filter((r) => r.userId === user.id)
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
   const stats = {
     hikesAdded: userHikes.length,
@@ -105,7 +130,12 @@ export default function Profile() {
           </TabsList>
 
           <TabsContent value="hikes">
-            {userHikes.length > 0 ? (
+            {loading ? (
+              <div className="text-center py-16">
+                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
+                <p className="text-muted-foreground">Loading hikes...</p>
+              </div>
+            ) : userHikes.length > 0 ? (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {userHikes.map((hike) => (
                   <HikeCard key={hike.id} hike={hike} />
@@ -124,10 +154,15 @@ export default function Profile() {
           </TabsContent>
 
           <TabsContent value="reviews">
-            {userRatings.length > 0 ? (
+            {loading ? (
+              <div className="text-center py-16">
+                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
+                <p className="text-muted-foreground">Loading reviews...</p>
+              </div>
+            ) : userRatings.length > 0 ? (
               <div className="space-y-4 max-w-4xl">
                 {userRatings.map((rating) => {
-                  const hike = hikes.find((h) => h.id === rating.hikeId);
+                  const hike = userHikes.find((h) => h.id === rating.hikeId);
                   return (
                     <div key={rating.id}>
                       {hike && (

@@ -61,17 +61,23 @@ export default function Login() {
     }
   };
 
-  const handleForgotPassword = () => {
+  const handleForgotPassword = async () => {
     if (!forgotPasswordEmail) {
       return;
     }
-    // Mock forgot password - in production, this would call the backend
-    setResetSent(true);
-    setTimeout(() => {
-      setResetDialogOpen(false);
-      setResetSent(false);
-      setForgotPasswordEmail('');
-    }, 3000);
+    try {
+      const { authAPI } = await import('../api');
+      await authAPI.sendResetCode(forgotPasswordEmail);
+      setResetSent(true);
+      setTimeout(() => {
+        setResetDialogOpen(false);
+        setResetSent(false);
+        setForgotPasswordEmail('');
+      }, 3000);
+    } catch (error) {
+      console.error('Error sending reset code:', error);
+      alert('Failed to send reset code. Please try again.');
+    }
   };
 
   return (

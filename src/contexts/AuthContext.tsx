@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { User } from '../types';
-import { users } from '../data/dummy-data';
+import { authAPI } from '../api';
 
 interface AuthContextType {
   user: User | null;
@@ -33,36 +33,46 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const login = async (email: string, password: string): Promise<boolean> => {
-    // Mock login - in production, this would call the backend
-    // For now, just check if email exists in dummy data
-    const foundUser = users.find(u => u.email === email);
-    
-    if (foundUser && password.length >= 7) {
-      setUser(foundUser);
-      localStorage.setItem('currentUser', JSON.stringify(foundUser));
-      return true;
+    try {
+      const response = await authAPI.login(email, password);
+      if (response.status === 'success') {
+        // Create user object from response
+        const userData: User = {
+          id: String(response.user_id),
+          email: email,
+          username: email.split('@')[0], // Use email prefix as username fallback
+          friends: []
+        };
+        setUser(userData);
+        localStorage.setItem('currentUser', JSON.stringify(userData));
+        return true;
+      }
+      return false;
+    } catch (error) {
+      console.error('Login error:', error);
+      return false;
     }
-    return false;
   };
 
   const signup = async (username: string, email: string, password: string): Promise<boolean> => {
-    // Mock signup - in production, this would call the backend
-    if (password.length < 7) return false;
-    
-    // Check if email already exists
-    const existingUser = users.find(u => u.email === email);
-    if (existingUser) return false;
-
-    const newUser: User = {
-      id: String(users.length + 1),
-      username,
-      email,
-      friends: []
-    };
-
-    setUser(newUser);
-    localStorage.setItem('currentUser', JSON.stringify(newUser));
-    return true;
+    try {
+      const response = await authAPI.signup(username, email, password);
+      if (response.status === 'success') {
+        const userData: User = {
+          id: String(response.user_id || Date.now()),
+          username,
+          email,
+          friends: []
+        };
+        setUser(userData);
+        localStorage.setItem('currentUser', JSON.stringify(userData));
+        return true;
+      }
+      return false;
+    } catch (error) {
+      console.error('Signup error:', error);
+      return false;
+    }
   };
 
   const logout = () => {
