@@ -68,7 +68,7 @@ export default function Home() {
               description: hike.description || '',
               images: thumbnailUrl ? [thumbnailUrl] : (hike.images || []),
               averageRating: hike.average_rating || hike.averageRating || 0,
-              totalRatings: hike.totalRatings || 0,
+              totalRatings: hike.total_ratings || hike.totalRatings || 0,
               createdBy: String(hike.created_by || hike.createdBy || ''),
               createdAt: hike.created_at || hike.createdAt || new Date().toISOString()
             };
