@@ -6,7 +6,7 @@ import { Avatar, AvatarFallback, AvatarImage } from '../components/ui/avatar';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { ArrowLeft, MapPin, Star } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
-import { hikesAPI, reviewsAPI } from '../api';
+import { hikesAPI, reviewsAPI, friendsAPI } from '../api';
 import { Hike, Rating } from '../types';
 import HikeCard from '../components/HikeCard';
 import CommentCard from '../components/CommentCard';
@@ -16,7 +16,9 @@ export default function Profile() {
   const { user, isAuthenticated, isLoading } = useAuth();
   const [activeTab, setActiveTab] = useState('hikes');
   const [userHikes, setUserHikes] = useState<Hike[]>([]);
+  const [allHikes, setAllHikes] = useState<Hike[]>([]); // Store all hikes to find hikes for reviews
   const [userRatings, setUserRatings] = useState<Rating[]>([]);
+  const [friendsCount, setFriendsCount] = useState(0);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -25,17 +27,143 @@ export default function Profile() {
     const fetchData = async () => {
       setLoading(true);
       try {
-        // Fetch user's hikes and reviews
-        // Note: You may need to implement these endpoints on the backend
-        const allHikes = await hikesAPI.getAll();
-        const filteredHikes = Array.isArray(allHikes) 
-          ? allHikes.filter((h: Hike) => h.createdBy === user.id)
-          : [];
-        setUserHikes(filteredHikes);
+        // Fetch all hikes
+        const allHikesResponse = await hikesAPI.getAll();
+        
+        // Debug: Log raw response
+        console.log('Raw API response (first 3 hikes):', 
+          Array.isArray(allHikesResponse) 
+            ? allHikesResponse.slice(0, 3).map((h: any) => ({
+                hike_id: h.hike_id,
+                name: h.name,
+                created_by: h.created_by,
+                createdBy: h.createdBy,
+                hasCreatedBy: 'created_by' in h || 'createdBy' in h
+              }))
+            : 'Not an array'
+        );
+        
+        // Transform backend response to frontend format (same as Home.tsx)
+        const backendBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080/CSCI201-Final-Project-Backend';
+        const imageBaseUrl = backendBaseUrl.replace('/api', '').replace(/\/$/, '');
+        
+        const transformedHikes = Array.isArray(allHikesResponse) ? allHikesResponse.map((hike: any) => {
+          // Map difficulty number to string
+          let difficultyStr: 'Easy' | 'Moderate' | 'Hard' | 'Expert' = 'Moderate';
+          const difficultyNum = hike.difficulty || 2.0;
+          if (difficultyNum <= 1.5) difficultyStr = 'Easy';
+          else if (difficultyNum <= 3.0) difficultyStr = 'Moderate';
+          else if (difficultyNum <= 4.5) difficultyStr = 'Hard';
+          else difficultyStr = 'Expert';
+          
+          // Convert thumbnail_url to full URL if it's a relative path
+          let thumbnailUrl = hike.thumbnail_url;
+          if (thumbnailUrl && thumbnailUrl.startsWith('/')) {
+            thumbnailUrl = imageBaseUrl + thumbnailUrl;
+          }
+          
+          // Handle created_by field - check both snake_case and camelCase
+          // Use != null to check for both null and undefined, but allow 0 as a valid value
+          let createdByValue = '';
+          if (hike.created_by != null) {
+            createdByValue = String(hike.created_by);
+          } else if (hike.createdBy != null) {
+            createdByValue = String(hike.createdBy);
+          }
+          
+          return {
+            id: String(hike.hike_id || hike.id || ''),
+            name: hike.name || '',
+            location: hike.location_text || hike.location || '',
+            difficulty: difficultyStr,
+            length: hike.distance || hike.length || 0,
+            description: hike.description || '',
+            images: thumbnailUrl ? [thumbnailUrl] : (hike.images || []),
+            averageRating: hike.average_rating || hike.averageRating || 0,
+            totalRatings: hike.total_ratings || hike.totalRatings || 0,
+            createdBy: createdByValue,
+            createdAt: hike.created_at || hike.createdAt || new Date().toISOString()
+          };
+        }) : [];
 
-        // For reviews, we'd need a user-specific endpoint or filter all reviews
-        // For now, we'll leave it empty or you can implement a user reviews endpoint
-        setUserRatings([]);
+        // Store all hikes for finding hikes in reviews
+        setAllHikes(transformedHikes);
+        
+        // Filter hikes created by the user
+        // Ensure both sides are strings for comparison
+        const userIdStr = String(user.id).trim();
+        const userCreatedHikes = transformedHikes.filter((h: Hike) => {
+          const hikeCreatedByStr = String(h.createdBy || '').trim();
+          const matches = hikeCreatedByStr === userIdStr && hikeCreatedByStr !== '';
+          if (matches) {
+            console.log('Match found:', { hikeId: h.id, hikeName: h.name, createdBy: hikeCreatedByStr, userId: userIdStr });
+          }
+          return matches;
+        });
+        
+        console.log('Profile Debug Info:');
+        console.log('  User ID:', userIdStr, '(type:', typeof userIdStr, ')');
+        console.log('  Total hikes fetched:', transformedHikes.length);
+        console.log('  User created hikes found:', userCreatedHikes.length);
+        console.log('  Sample hikes:', transformedHikes.slice(0, 5).map(h => ({ 
+          id: h.id, 
+          name: h.name, 
+          createdBy: h.createdBy, 
+          createdByType: typeof h.createdBy,
+          matches: String(h.createdBy || '').trim() === userIdStr
+        })));
+        
+        setUserHikes(userCreatedHikes);
+
+        // Fetch reviews for all hikes and filter by userId
+        // We need to fetch reviews for all hikes to find reviews the user made
+        const allHikeIds = transformedHikes.map((h: Hike) => Number(h.id));
+        const reviewPromises = allHikeIds.map((hikeId: number) => 
+          reviewsAPI.getByHikeId(hikeId).catch(() => ({ reviews: [] }))
+        );
+        
+        const reviewResponses = await Promise.all(reviewPromises);
+        const allReviews: Rating[] = [];
+        
+        reviewResponses.forEach((response: any) => {
+          const reviews = response.reviews || [];
+          reviews.forEach((review: any) => {
+            // Transform review to match Rating type
+            const reviewUserId = String(review.userId || review.user_id || '');
+            if (reviewUserId === user.id) {
+              let upvotedBy: string[] = [];
+              if (Array.isArray(review.upvotedBy)) {
+                upvotedBy = review.upvotedBy.map((id: any) => String(id));
+              } else if (review.upvotedByCurrentUser && user) {
+                upvotedBy = [user.id];
+              }
+              
+              allReviews.push({
+                id: String(review.id || review.review_id || ''),
+                hikeId: String(review.hikeId || review.hike_id || ''),
+                userId: reviewUserId,
+                rating: review.rating || 0,
+                comment: review.comment || review.review_body || '',
+                upvotes: review.upvotes || review.upvotes_count || 0,
+                upvotedBy: upvotedBy,
+                images: review.images || [],
+                createdAt: review.createdAt || review.created_at || new Date().toISOString(),
+                username: review.username || `User ${reviewUserId}`
+              } as Rating);
+            }
+          });
+        });
+        
+        setUserRatings(allReviews);
+
+        // Fetch friends count
+        try {
+          const friendsResponse = await friendsAPI.getAll();
+          setFriendsCount(friendsResponse.totalFriends || 0);
+        } catch (error) {
+          console.error('Error fetching friends:', error);
+          setFriendsCount(0);
+        }
       } catch (error) {
         console.error('Error fetching profile data:', error);
       } finally {
@@ -71,7 +199,7 @@ export default function Profile() {
     hikesAdded: userHikes.length,
     reviewsPosted: userRatings.length,
     totalUpvotes: userRatings.reduce((sum, r) => sum + r.upvotes, 0),
-    friends: user.friends.length
+    friends: friendsCount
   };
 
   return (
@@ -162,7 +290,8 @@ export default function Profile() {
             ) : userRatings.length > 0 ? (
               <div className="space-y-4 max-w-4xl">
                 {userRatings.map((rating) => {
-                  const hike = userHikes.find((h) => h.id === rating.hikeId);
+                  // Find hike from all hikes, not just user-created hikes
+                  const hike = allHikes.find((h) => h.id === rating.hikeId);
                   return (
                     <div key={rating.id}>
                       {hike && (
